@@ -1,0 +1,13 @@
+# build output
+build/
+*.o
+*.obj
+*.exe
+*.err
+tools/gen_icon.exe
+
+# local logs
+*.log
+
+# personal notes (don't publish)
+CLIPBOARD PROGRAM INSTRUCTIONS.md

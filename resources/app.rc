@@ -1,0 +1,30 @@
+// Microsoft Visual C++ / MinGW resource script
+#include <windows.h>
+
+1 ICON "app.ico"
+
+1 VERSIONINFO
+ FILEVERSION 1,0,0,0
+ PRODUCTVERSION 1,0,0,0
+ FILEOS 0x40004L
+ FILETYPE 0x1L
+BEGIN
+  BLOCK "StringFileInfo"
+  BEGIN
+    BLOCK "040904b0"
+    BEGIN
+      VALUE "CompanyName", "ClipVault"
+      VALUE "FileDescription", "ClipVault - lightweight clipboard history"
+      VALUE "FileVersion", "1.0.0.0"
+      VALUE "InternalName", "ClipVault"
+      VALUE "LegalCopyright", "MIT License"
+      VALUE "OriginalFilename", "ClipVault.exe"
+      VALUE "ProductName", "ClipVault"
+      VALUE "ProductVersion", "1.0.0.0"
+    END
+  END
+  BLOCK "VarFileInfo"
+  BEGIN
+    VALUE "Translation", 0x409, 1200
+  END
+END
