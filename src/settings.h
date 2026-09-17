@@ -31,6 +31,7 @@ struct Settings {
   // Appearance
   int themeMode = (int)ThemeMode::System;
   bool compactRows = false;
+  bool hoverPreview = true;  // large image preview on hover (v2)
 
   bool firstRun = true;
 

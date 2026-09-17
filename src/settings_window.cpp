@@ -31,6 +31,7 @@ enum CtrlId {
   ID_CLEAREXIT,
   ID_EXCLUDE,
   ID_THEME,
+  ID_HOVERPREVIEW,
   ID_COMPACT,
   ID_CLEARUNPIN,
   ID_CLEARALL,
@@ -239,6 +240,7 @@ void LoadValues() {
   chk(ID_PAUSE, s.pauseMonitoring);
   chk(ID_CLEAREXIT, s.clearOnExit);
   chk(ID_COMPACT, s.compactRows);
+  chk(ID_HOVERPREVIEW, s.hoverPreview);
 
   HWND cb;
   cb = GetDlgItem(g_ui.hwnd, ID_MAXITEMS);
@@ -276,6 +278,7 @@ void SaveValues() {
   s.pauseMonitoring = chk(ID_PAUSE);
   s.clearOnExit = chk(ID_CLEAREXIT);
   s.compactRows = chk(ID_COMPACT);
+  s.hoverPreview = chk(ID_HOVERPREVIEW);
 
   static const int items[5] = {25, 50, 100, 200, 500};
   int sel = ComboSel(GetDlgItem(g_ui.hwnd, ID_MAXITEMS));
@@ -468,6 +471,8 @@ LRESULT CALLBACK SettingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
       AddComboItem(cb, L"Dark");
       AddComboItem(cb, L"Light");
       y += 30;
+      AddCheck(hwnd, ID_HOVERPREVIEW, L"Large preview when hovering images", kMargin + 16, y,
+               kW - 64); y += 27;
       AddCheck(hwnd, ID_COMPACT, L"Compact item spacing", kMargin + 16, y, kW - 64); y += 27;
       endSection();
 
