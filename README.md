@@ -75,6 +75,11 @@ Everything stays on your machine. ClipVault contains **no networking code at all
 
 ![settings](screenshots/settings.png)
 
+## 📝 Notes
+
+- **Testing Unicode:** don't type test strings into a PowerShell console — its codepage can mangle fullwidth/astral characters *before* they reach the clipboard. Copy from a real app (browser, Notepad) and paste back into Notepad to verify.
+- Emoji render as monochrome outlines in the list (a GDI limitation); the underlying codepoints are preserved exactly and paste correctly into modern apps.
+
 ## 📄 License
 
 MIT — see [LICENSE](LICENSE).
