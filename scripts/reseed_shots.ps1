@@ -47,7 +47,7 @@ Start-Sleep -Milliseconds 500
 Start-Sleep -Milliseconds 2200
 
 # 3. emoji / fancy unicode row
-Set-ClipboardRetry "Emoji & Unicode: 😀 🎉 🚀 𝓗𝓮𝓵𝓵𝓸 Ｆｕｌｌｗｉｄｔｈ"
+Set-ClipboardRetry "Unicode safe: Ｔｕｌｌｗｉｄｔｈ 你好 Привет مرحبا 𝓗𝓮𝓵𝓵𝓸 😀🚀"
 Start-Sleep -Milliseconds 800
 
 # 4. code row

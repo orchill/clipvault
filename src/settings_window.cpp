@@ -478,12 +478,15 @@ LRESULT CALLBACK SettingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
       endSection();
 
       // ---- action row (bottom anchored) ----
+      // left group: clear buttons; right group: Save then Cancel (Cancel is
+      // always the rightmost). The window's minimum width guarantees a gap
+      // between the two groups at any size.
       y += 8;
       g_contentH = y + 44;
-      AddButton(hwnd, ID_CLEARUNPIN, L"Clear unpinned", kMargin, 44, 122, 32, A_BOTTOM_L);
-      AddButton(hwnd, ID_CLEARALL, L"Clear all", kMargin + 132, 44, 96, 32, A_BOTTOM_L);
-      AddButton(hwnd, ID_CANCEL, L"Cancel", 120, 44, 96, 32, A_BOTTOM_R);
-      AddButton(hwnd, ID_SAVE, L"Save", 16, 44, 96, 32, A_BOTTOM_R);
+      AddButton(hwnd, ID_CLEARUNPIN, L"Clear unpinned", kMargin, 44, 118, 32, A_BOTTOM_L);
+      AddButton(hwnd, ID_CLEARALL, L"Clear all", kMargin + 128, 44, 94, 32, A_BOTTOM_L);
+      AddButton(hwnd, ID_SAVE, L"Save", 116, 44, 90, 32, A_BOTTOM_R);
+      AddButton(hwnd, ID_CANCEL, L"Cancel", 16, 44, 90, 32, A_BOTTOM_R);
 
       RECT wr{0, 0, u.S(kW), u.S(g_contentH)};
       AdjustWindowRectEx(&wr,
