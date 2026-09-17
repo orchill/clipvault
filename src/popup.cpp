@@ -6,8 +6,10 @@
 #include <objidl.h>
 #include <gdiplus.h>
 #include <windowsx.h>
+#include <shellapi.h>
 
-#include <cstdio>
+
+
 
 namespace cv {
 
@@ -16,7 +18,7 @@ namespace {
 constexpr wchar_t kClass[] = L"ClipVaultPopup";
 
 // context menu commands
-enum { CM_ACTIVATE = 2001, CM_PIN = 2002, CM_DELETE = 2003, CM_COPY = 2004 };
+enum { CM_ACTIVATE = 2001, CM_PIN = 2002, CM_DELETE = 2003, CM_COPY = 2004, CM_OPENPHOTO = 2005, CM_OPENLOC = 2006 };
 
 struct PopupState {
   std::vector<Item*> view;
@@ -528,32 +530,46 @@ void ShowPreview(PopupState& s, Item* it, int row) {
     wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
     wc.lpszClassName = L"ClipVaultPreview";
     RegisterClassExW(&wc);
+    // LAYERED + TRANSPARENT: mouse input passes through, so the popup beneath
+    // keeps working even when a large preview overlaps it
     g_hwndPreview = CreateWindowExW(
-        WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE, L"ClipVaultPreview", L"", WS_POPUP,
-        0, 0, 0, 0, nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
+        WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_LAYERED | WS_EX_TRANSPARENT,
+        L"ClipVaultPreview", L"", WS_POPUP, 0, 0, 0, 0, nullptr, nullptr,
+        GetModuleHandleW(nullptr), nullptr);
     if (g_hwndPreview) {
       DWORD pref = 2;
       DwmSetWindowAttribute(g_hwndPreview, 33, &pref, sizeof(pref));
+      SetLayeredWindowAttributes(g_hwndPreview, 0, 255, LWA_ALPHA);
     }
   }
 
   UINT iw = src->GetWidth(), ih = src->GetHeight();
   if (!iw || !ih) return;
-  int maxW = u.S(380), maxH = u.S(300);
-  double scale = ((double)maxW / iw < (double)maxH / ih) ? (double)maxW / iw : (double)maxH / ih;
-  if (scale > 2.0) scale = 2.0;
-  int w = (int)(iw * scale), h = (int)(ih * scale);
 
-  // place beside the popup, aligned with the hovered row, inside the work area
+  // size: proportional to the monitor work area so full-desktop captures show
+  // large, clamped so nothing leaves the screen; small images upscale max 2x
   RECT pr;
   GetWindowRect(a.hwndMain, &pr);
   HMONITOR mon = MonitorFromWindow(a.hwndMain, MONITOR_DEFAULTTONEAREST);
   MONITORINFO mi{};
   mi.cbSize = sizeof(mi);
   GetMonitorInfoW(mon, &mi);
-  int x = pr.right + u.S(10);
-  if (x + w > mi.rcWork.right) x = pr.left - u.S(10) - w;
-  if (x < mi.rcWork.left) x = mi.rcWork.left;
+  int workW = mi.rcWork.right - mi.rcWork.left;
+  int workH = mi.rcWork.bottom - mi.rcWork.top;
+  int maxW = workW * 55 / 100, maxH = workH * 70 / 100;
+  double scale = ((double)maxW / iw < (double)maxH / ih) ? (double)maxW / iw : (double)maxH / ih;
+  if (scale > 2.0) scale = 2.0;
+  int w = (int)(iw * scale), h = (int)(ih * scale);
+
+  // position: beside the popup when it fits, otherwise centered over the work
+  // area (the preview is click-through, so the popup keeps working beneath it)
+  int x;
+  if (pr.right + u.S(10) + w <= mi.rcWork.right)
+    x = pr.right + u.S(10);
+  else if (pr.left - u.S(10) - w >= mi.rcWork.left)
+    x = pr.left - u.S(10) - w;
+  else
+    x = mi.rcWork.left + (workW - w) / 2;
   RECT rr = RowRect(s, row);
   POINT pt{rr.left, (rr.top + rr.bottom) / 2};
   ClientToScreen(a.hwndMain, &pt);
@@ -868,6 +884,11 @@ static LRESULT CALLBACK PopupWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM 
       HMENU m = CreatePopupMenu();
       AppendMenuW(m, MF_STRING, CM_ACTIVATE, L"Paste");
       AppendMenuW(m, MF_STRING, CM_COPY, L"Copy again");
+      if (s.view[row]->type == ItemType::Image && !s.view[row]->imgFile.empty()) {
+        AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
+        AppendMenuW(m, MF_STRING, CM_OPENPHOTO, L"Open in Photos");
+        AppendMenuW(m, MF_STRING, CM_OPENLOC, L"Open file location");
+      }
       AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
       AppendMenuW(m, MF_STRING | (s.view[row]->pinned ? MF_CHECKED : 0), CM_PIN,
                   s.view[row]->pinned ? L"Unpin" : L"Pin");
@@ -899,6 +920,20 @@ static LRESULT CALLBACK PopupWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM 
             InvalidateRect(hwnd, nullptr, FALSE);
           }
           break;
+        case CM_OPENPHOTO:
+          if (it && !it->imgFile.empty())
+            ShellExecuteW(nullptr, L"open",
+                          (BlobDir() + L"\\" + Utf8ToUtf16(it->imgFile)).c_str(), nullptr,
+                          nullptr, SW_SHOWNORMAL);
+          break;
+        case CM_OPENLOC: {
+          if (it && !it->imgFile.empty()) {
+            wstring params = L"/select,\"" + BlobDir() + L"\\" + Utf8ToUtf16(it->imgFile) + L"\"";
+            ShellExecuteW(nullptr, L"open", L"explorer.exe", params.c_str(), nullptr,
+                          SW_SHOWNORMAL);
+          }
+          break;
+        }
         default:
           break;
       }
