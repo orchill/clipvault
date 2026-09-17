@@ -29,7 +29,7 @@ A lightweight, **native Windows clipboard manager** focused on speed, privacy, a
 ClipVault is built to sit in the tray all day without you noticing:
 
 - **0% CPU while idle** — event-driven, no polling, no background scanning
-- **~14 MB RAM** working set (3 MB private)
+- **Low, fixed memory footprint** — text previews are capped, images are stored on disk and only small thumbnails stay in RAM
 - **1 MB executable** — statically linked, no runtime dependencies, no installer
 - Disk writes are debounced and deduplicated — identical copies share one file, huge screenshots are compressed automatically
 
