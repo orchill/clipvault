@@ -90,7 +90,8 @@ void Reposition() {
       case A_RIGHT:
         x = cw - u.S(L.xd) - u.S(L.wd); y = u.S(L.yd); w = u.S(L.wd); h = u.S(L.hd); break;
       case A_STRETCH:
-        x = u.S(L.xd); y = u.S(L.yd); w = cw - u.S(L.xd) - u.S(kMargin); h = u.S(L.hd); break;
+        // keep the card's inner padding (16 DIP) on the right side too
+        x = u.S(L.xd); y = u.S(L.yd); w = cw - u.S(L.xd) - u.S(kMargin + 16); h = u.S(L.hd); break;
       case A_BOTTOM_L:
         x = u.S(L.xd); y = ch - u.S(L.yd); w = u.S(L.wd); h = u.S(L.hd); break;
       case A_BOTTOM_R:
