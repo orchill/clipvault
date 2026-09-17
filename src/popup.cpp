@@ -7,6 +7,8 @@
 #include <gdiplus.h>
 #include <windowsx.h>
 
+#include <cstdio>
+
 namespace cv {
 
 namespace {
@@ -143,9 +145,12 @@ void EnsureVisible(PopupState& s) {
   if (s.scroll < 0) s.scroll = 0;
 }
 
+void HidePreview();  // defined with the preview window below
+
 void RebuildView() {
   App& a = A();
   PopupState& s = *S();
+  HidePreview();  // view is about to change: rows shift under the cursor
   a.history.BuildView(s.searchLower, s.chip, s.view);
   EnsureVisible(s);
 }
@@ -455,6 +460,136 @@ bool InRect(const RECT& r, int x, int y) {
   return x >= r.left && x < r.right && y >= r.top && y < r.bottom;
 }
 
+// ---------------- large image hover preview ----------------
+
+HWND g_hwndPreview = nullptr;                 // borderless topmost preview window
+std::unique_ptr<Gdiplus::Bitmap> g_previewBmp;  // decoded full image, only while shown
+int g_previewRow = -1;                        // view index being previewed / pending
+i64 g_previewId = 0;                          // item id the pending preview is for
+
+LRESULT CALLBACK PreviewProc(HWND hwnd, UINT msg, WPARAM w, LPARAM l) {
+  switch (msg) {
+    case WM_PAINT: {
+      PAINTSTRUCT ps;
+      HDC dc = BeginPaint(hwnd, &ps);
+      RECT rc;
+      GetClientRect(hwnd, &rc);
+      Theme& t = A().ui.th;
+      HBRUSH b = CreateSolidBrush(t.surface);
+      FillRect(dc, &rc, b);
+      DeleteObject(b);
+      Gdiplus::Graphics g(dc);
+      g.SetInterpolationMode(Gdiplus::InterpolationModeHighQualityBicubic);
+      g.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);
+      if (g_previewBmp) {
+        UINT iw = g_previewBmp->GetWidth(), ih = g_previewBmp->GetHeight();
+        if (iw && ih) {
+          int bw = rc.right - 2, bh = rc.bottom - 2;
+          double scale = ((double)bw / iw < (double)bh / ih) ? (double)bw / iw : (double)bh / ih;
+          if (scale > 2.0) scale = 2.0;  // small images: don't upscale into a blur
+          int dw = (int)(iw * scale), dh = (int)(ih * scale);
+          Gdiplus::Rect dst((rc.right - dw) / 2, (rc.bottom - dh) / 2, dw, dh);
+          g.DrawImage(g_previewBmp.get(), dst, 0, 0, (int)iw, (int)ih, Gdiplus::UnitPixel);
+        }
+      }
+      Gdiplus::Pen pen(Gcol(t.sep));
+      g.DrawRectangle(&pen, 0, 0, rc.right - 1, rc.bottom - 1);
+      EndPaint(hwnd, &ps);
+      return 0;
+    }
+    case WM_ERASEBKGND:
+      return 1;
+    default:
+      return DefWindowProcW(hwnd, msg, w, l);
+  }
+}
+
+void HidePreview() {
+  App& a = A();
+  if (a.hwndMain) KillTimer(a.hwndMain, TIMER_PREVIEW);
+  g_previewRow = -1;
+  g_previewId = 0;
+  if (g_hwndPreview && IsWindowVisible(g_hwndPreview)) ShowWindow(g_hwndPreview, SW_HIDE);
+  g_previewBmp.reset();
+}
+
+void ShowPreview(PopupState& s, Item* it, int row) {
+  App& a = A();
+  UiCtx& u = a.ui;
+  if (!it || it->imgFile.empty()) return;
+  wstring path = BlobDir() + L"\\" + Utf8ToUtf16(it->imgFile);
+  std::unique_ptr<Gdiplus::Bitmap> src(new Gdiplus::Bitmap(path.c_str()));
+
+  if (!g_hwndPreview) {
+    WNDCLASSEXW wc{};
+    wc.cbSize = sizeof(wc);
+    wc.lpfnWndProc = PreviewProc;
+    wc.hInstance = GetModuleHandleW(nullptr);
+    wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+    wc.lpszClassName = L"ClipVaultPreview";
+    RegisterClassExW(&wc);
+    g_hwndPreview = CreateWindowExW(
+        WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE, L"ClipVaultPreview", L"", WS_POPUP,
+        0, 0, 0, 0, nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
+    if (g_hwndPreview) {
+      DWORD pref = 2;
+      DwmSetWindowAttribute(g_hwndPreview, 33, &pref, sizeof(pref));
+    }
+  }
+
+  UINT iw = src->GetWidth(), ih = src->GetHeight();
+  if (!iw || !ih) return;
+  int maxW = u.S(380), maxH = u.S(300);
+  double scale = ((double)maxW / iw < (double)maxH / ih) ? (double)maxW / iw : (double)maxH / ih;
+  if (scale > 2.0) scale = 2.0;
+  int w = (int)(iw * scale), h = (int)(ih * scale);
+
+  // place beside the popup, aligned with the hovered row, inside the work area
+  RECT pr;
+  GetWindowRect(a.hwndMain, &pr);
+  HMONITOR mon = MonitorFromWindow(a.hwndMain, MONITOR_DEFAULTTONEAREST);
+  MONITORINFO mi{};
+  mi.cbSize = sizeof(mi);
+  GetMonitorInfoW(mon, &mi);
+  int x = pr.right + u.S(10);
+  if (x + w > mi.rcWork.right) x = pr.left - u.S(10) - w;
+  if (x < mi.rcWork.left) x = mi.rcWork.left;
+  RECT rr = RowRect(s, row);
+  POINT pt{rr.left, (rr.top + rr.bottom) / 2};
+  ClientToScreen(a.hwndMain, &pt);
+  int y = pt.y - h / 2;
+  if (y < mi.rcWork.top) y = mi.rcWork.top;
+  if (y + h > mi.rcWork.bottom) y = mi.rcWork.bottom - h;
+
+  g_previewBmp = std::move(src);
+  SetWindowPos(g_hwndPreview, HWND_TOPMOST, x, y, w, h, SWP_SHOWWINDOW | SWP_NOACTIVATE);
+  InvalidateRect(g_hwndPreview, nullptr, FALSE);
+}
+
+void UpdatePreviewIntent(HWND hwnd, int row) {
+  PopupState& s = *S();
+  Settings& st = Settings::I();
+  bool eligible = st.hoverPreview && row >= 0 && row < (int)s.view.size() &&
+                  s.view[row]->type == ItemType::Image && !s.view[row]->imgFile.empty();
+  if (!eligible) {
+    if (g_previewRow != -1) HidePreview();
+    return;
+  }
+  if (row == g_previewRow) return;  // already pending or showing for this row
+  HidePreview();
+  g_previewRow = row;
+  g_previewId = s.view[row]->id;
+  SetTimer(hwnd, TIMER_PREVIEW, 1500, nullptr);
+}
+
+void PreviewTimerFired(HWND hwnd) {
+  KillTimer(hwnd, TIMER_PREVIEW);
+  PopupState& s = *S();
+  if (g_previewRow < 0 || g_previewRow >= (int)s.view.size()) { HidePreview(); return; }
+  Item* it = s.view[g_previewRow];
+  ShowPreview(s, it, g_previewRow);
+}
+
 // returns chip index or -1
 int ChipAt(PopupState& s, int x) {
   UiCtx& u = A().ui;
@@ -565,8 +700,18 @@ static LRESULT CALLBACK PopupWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM 
     }
 
     case WM_ACTIVATE:
-      if (LOWORD(wParam) == WA_INACTIVE) a.HidePopup(false);
+      if (LOWORD(wParam) == WA_INACTIVE) {
+        HidePreview();
+        a.HidePopup(false);
+      }
       return 0;
+
+    case WM_TIMER:
+      if (wParam == TIMER_PREVIEW) {
+        PreviewTimerFired(hwnd);
+        return 0;
+      }
+      return AppWndProc(hwnd, msg, wParam, lParam);  // app-owned timers
 
     case WM_COMMAND:
       // search-as-you-type: fired by the edit control on every keystroke only
@@ -618,10 +763,8 @@ static LRESULT CALLBACK PopupWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM 
         s.hover = newHover;
         s.hoverBtn = newBtn;
         InvalidateRow(hwnd, s, s.hover);
-        if (s.hover < 0) {
-          // outside rows; still may repaint chips/footer hover states (skipped)
-        }
       }
+      UpdatePreviewIntent(hwnd, newHover);
       return 0;
     }
 
@@ -630,9 +773,11 @@ static LRESULT CALLBACK PopupWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM 
       InvalidateRow(hwnd, s, s.hover);
       s.hover = -1;
       s.hoverBtn = 0;
+      HidePreview();
       return 0;
 
     case WM_MOUSEWHEEL: {
+      HidePreview();  // rows shift under the cursor
       int delta = GET_WHEEL_DELTA_WPARAM(wParam);
       int rows = (delta > 0 ? -3 : 3);  // one notch = 3 rows
       int ns = s.scroll + rows;
@@ -652,6 +797,7 @@ static LRESULT CALLBACK PopupWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM 
       // scrollbar?
       int listH = s.rcList.bottom - s.rcList.top;
       if (s.totalRowsPx > listH && x >= s.rcList.right - a.ui.S(12)) {
+        HidePreview();
         s.dragScroll = true;
         s.dragY0 = y;
         s.dragScroll0 = s.scroll;
@@ -830,6 +976,10 @@ bool CreatePopupWindow(HINSTANCE hInst) {
   Layout(a.hwndMain);
   RebuildView();
   return true;
+}
+
+void PopupHidePreview() {
+  HidePreview();
 }
 
 void PopupReset() {

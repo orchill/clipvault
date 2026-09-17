@@ -20,7 +20,8 @@ constexpr LPARAM OPENSETTINGS_MAGIC = 0x434C5631;
 
 constexpr int TIMER_PERSIST = 1;   // debounced metadata flush
 constexpr int TIMER_PASTE = 2;     // deferred Ctrl+V after focus restore
-constexpr int TIMER_CLEAN = 3;     // periodic auto-cleanup (6h)
+constexpr int TIMER_CLEAN = 3;
+constexpr int TIMER_PREVIEW = 4;  // hover dwell before the large image preview shows     // periodic auto-cleanup (6h)
 constexpr int HOTKEY_ID = 1;
 
 enum class KeyCmd { Up, Down, PgUp, PgDn, Enter, Esc, Delete, Pin, Copy };

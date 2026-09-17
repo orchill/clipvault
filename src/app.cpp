@@ -180,6 +180,7 @@ void App::ShowPopup() {
 
 void App::HidePopup(bool restoreFocus) {
   if (!IsWindowVisible(hwndMain)) return;
+  PopupHidePreview();
   KillTimer(hwndMain, TIMER_PASTE);
   ShowWindow(hwndMain, SW_HIDE);
   if (restoreFocus && prevWindow && IsWindow(prevWindow)) {

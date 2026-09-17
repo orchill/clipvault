@@ -13,5 +13,6 @@ void PopupDeleteSelection();
 void PopupPinSelection();
 void PopupCopySelection();
 void PopupMoveSelection(KeyCmd cmd);
+void PopupHidePreview();  // close the large image preview (on popup hide)
 
 }  // namespace cv
