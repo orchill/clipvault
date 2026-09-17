@@ -191,6 +191,7 @@ CaptureResult CaptureClipboard() {
     if (IsClipboardFormatAvailable(pngFmt)) {
       if (!CopyGlobal((HGLOBAL)GetClipboardData(pngFmt), r.pngBytes)) return bail();
       ParsePngDims(r.pngBytes, r.imgW, r.imgH);
+      if (r.imgW <= 0 || r.imgH <= 0) return bail();  // malformed PNG payload
       r.contentSize = r.pngBytes.size();
       if (!r.contentSize) return bail();
     } else {

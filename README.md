@@ -20,7 +20,7 @@ A lightweight, **native Windows clipboard manager** focused on speed, privacy, a
 - **Search** as you type, plus quick filters (All / Text / Images / Pinned)
 - History persists across restarts (optional)
 - Duplicate detection — copying the same thing again just moves it to the top
-- Large hover preview for image entries (1.5 s dwell, toggleable) — full-desktop screenshots scale to your work area, never out of bounds; right-click an image for **Open in Photos** / **Open file location**
+- Large hover preview for image entries (1.5 s dwell, toggleable) — full-desktop screenshots scale to your work area, never out of bounds; right-click an image for **Open in Photos**, **Open with…** (system app picker) or **Open file location**
 - Light / dark / system theme, per-monitor DPI aware
 - System tray integration: open, pause monitoring, clear history, start with Windows
 

@@ -18,7 +18,7 @@ namespace {
 constexpr wchar_t kClass[] = L"ClipVaultPopup";
 
 // context menu commands
-enum { CM_ACTIVATE = 2001, CM_PIN = 2002, CM_DELETE = 2003, CM_COPY = 2004, CM_OPENPHOTO = 2005, CM_OPENLOC = 2006 };
+enum { CM_ACTIVATE = 2001, CM_PIN = 2002, CM_DELETE = 2003, CM_COPY = 2004, CM_OPENPHOTO = 2005, CM_OPENLOC = 2006, CM_OPENWITH = 2007 };
 
 struct PopupState {
   std::vector<Item*> view;
@@ -464,6 +464,7 @@ bool InRect(const RECT& r, int x, int y) {
 
 // ---------------- large image hover preview ----------------
 
+bool g_openWithDialogOpen = false;            // suppress auto-hide while the app picker is up
 HWND g_hwndPreview = nullptr;                 // borderless topmost preview window
 std::unique_ptr<Gdiplus::Bitmap> g_previewBmp;  // decoded full image, only while shown
 int g_previewRow = -1;                        // view index being previewed / pending
@@ -716,7 +717,7 @@ static LRESULT CALLBACK PopupWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM 
     }
 
     case WM_ACTIVATE:
-      if (LOWORD(wParam) == WA_INACTIVE) {
+      if (LOWORD(wParam) == WA_INACTIVE && !g_openWithDialogOpen) {
         HidePreview();
         a.HidePopup(false);
       }
@@ -887,6 +888,7 @@ static LRESULT CALLBACK PopupWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM 
       if (s.view[row]->type == ItemType::Image && !s.view[row]->imgFile.empty()) {
         AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
         AppendMenuW(m, MF_STRING, CM_OPENPHOTO, L"Open in Photos");
+        AppendMenuW(m, MF_STRING, CM_OPENWITH, L"Open with…");
         AppendMenuW(m, MF_STRING, CM_OPENLOC, L"Open file location");
       }
       AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
@@ -926,6 +928,28 @@ static LRESULT CALLBACK PopupWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM 
                           (BlobDir() + L"\\" + Utf8ToUtf16(it->imgFile)).c_str(), nullptr,
                           nullptr, SW_SHOWNORMAL);
           break;
+        case CM_OPENWITH: {
+          if (it && !it->imgFile.empty()) {
+            // system "How do you want to open this file?" picker (shell32, Win7+)
+            struct OPENASINFO_ { PCWSTR pcszFile; PCWSTR pcszClass; int oaifInFlags; };
+            using PFN = HRESULT (WINAPI *)(HWND, const OPENASINFO_ *);
+            HMODULE sh = GetModuleHandleW(L"shell32.dll");
+            PFN openWith = sh ? (PFN)GetProcAddress(sh, "SHOpenWithDialog") : nullptr;
+            wstring path = BlobDir() + L"\\" + Utf8ToUtf16(it->imgFile);
+            g_openWithDialogOpen = true;  // keep the popup visible behind the picker
+            bool launched = false;
+            if (openWith) {
+              OPENASINFO_ oi{};
+              oi.pcszFile = path.c_str();
+              oi.oaifInFlags = 0x1 | 0x4;  // allow "always use this app" + execute
+              launched = SUCCEEDED(openWith(a.hwndMain, &oi));
+            }
+            if (!launched)  // very old shell: fall back to the openas verb
+              ShellExecuteW(nullptr, L"openas", path.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+            g_openWithDialogOpen = false;
+          }
+          break;
+        }
         case CM_OPENLOC: {
           if (it && !it->imgFile.empty()) {
             wstring params = L"/select,\"" + BlobDir() + L"\\" + Utf8ToUtf16(it->imgFile) + L"\"";
