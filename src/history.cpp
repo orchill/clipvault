@@ -45,8 +45,12 @@ int History::Add(Item&& it) {
   Settings& s = Settings::I();
   Item* ex = FindHash(it.hash);
   if (ex && s.dupMode != (int)DupMode::Allow) {
-    ex->ts = it.ts;
-    ex->size = it.size ? it.size : ex->size;
+    if (s.dupMode == (int)DupMode::KeepPos) {
+      // keep the existing timestamp so the entry keeps its position on reload
+    } else {
+      ex->ts = it.ts;
+      ex->size = it.size ? it.size : ex->size;
+    }
     if (s.dupMode == (int)DupMode::MoveTop && !ex->pinned && pinnedCount_ > 0) {
       // move to newest unpinned position (front of the unpinned section)
       size_t idx = (size_t)(ex - items_.data());
@@ -62,9 +66,11 @@ int History::Add(Item&& it) {
     // never deleting pinned items. If every entry is pinned, nothing is removed.
     if (UnpinnedCount() > 0) {
       size_t victim = items_.size() - 1;  // back of unpinned section = oldest
-      DeleteBlobsIfUnreferenced(items_[victim].blobFile, items_[victim].imgFile);
+      string blobFile = items_[victim].blobFile;
+      string imgFile = items_[victim].imgFile;
       FreeThumb(items_[victim]);
       items_.pop_back();
+      DeleteBlobsIfUnreferenced(blobFile, imgFile);  // after removal: refs are honest
     }
   }
 
@@ -73,10 +79,12 @@ int History::Add(Item&& it) {
 }
 
 void History::UnlinkAt(size_t idx) {
-  DeleteBlobsIfUnreferenced(items_[idx].blobFile, items_[idx].imgFile);
+  string blobFile = items_[idx].blobFile;
+  string imgFile = items_[idx].imgFile;
   FreeThumb(items_[idx]);
   if (idx < pinnedCount_) pinnedCount_--;
   items_.erase(items_.begin() + idx);
+  DeleteBlobsIfUnreferenced(blobFile, imgFile);  // after removal: refs are honest
 }
 
 bool History::Remove(i64 id) {
@@ -100,6 +108,7 @@ bool History::SetPinned(i64 id, bool pin) {
         items_.insert(items_.begin(), std::move(moved));
         pinnedCount_++;
       } else {
+        pinnedCount_--;  // the item leaves the pinned section
         items_.insert(items_.begin() + pinnedCount_, std::move(moved));  // top of unpinned
       }
       return true;
@@ -109,20 +118,28 @@ bool History::SetPinned(i64 id, bool pin) {
 }
 
 void History::ClearUnpinned() {
+  // collect affected blob names first; GC only after the items are gone so
+  // reference counts are honest (blobs are shared between duplicate items)
+  std::vector<string> names;
   for (size_t k = items_.size(); k-- > pinnedCount_;) {
-    DeleteBlobsIfUnreferenced(items_[k].blobFile, items_[k].imgFile);
+    names.push_back(items_[k].blobFile);
+    names.push_back(items_[k].imgFile);
     FreeThumb(items_[k]);
   }
   items_.resize(pinnedCount_);
+  GcUnreferenced(names);
 }
 
 void History::ClearAll() {
+  std::vector<string> names;
   for (auto& it : items_) {
-    DeleteBlobsIfUnreferenced(it.blobFile, it.imgFile);
+    names.push_back(it.blobFile);
+    names.push_back(it.imgFile);
     FreeThumb(it);
   }
   items_.clear();
   pinnedCount_ = 0;
+  GcUnreferenced(names);
 }
 
 void History::AutoClean(int days) {
@@ -147,18 +164,23 @@ void History::EnforceImageBudget(u64 maxBytes) {
 }
 
 void History::DeleteBlobsIfUnreferenced(const string& blobFile, const string& imgFile) {
-  // blobs are content-addressed; a file may be shared by duplicate items.
-  // The caller has already removed the item from items_, so zero remaining
-  // references means the blob is safe to delete.
-  auto countRefs = [&](const string& f) -> int {
-    if (f.empty()) return 1;  // "" is always "referenced"
-    int n = 0;
+  // callers must have removed the owning item already; zero remaining
+  // references means the content-addressed blob is safe to delete
+  GcUnreferenced({blobFile, imgFile});
+}
+
+void History::GcUnreferenced(const std::vector<string>& names) {
+  // dedup first: several removed items may have shared one blob file
+  std::vector<string> uniq = names;
+  std::sort(uniq.begin(), uniq.end());
+  uniq.erase(std::unique(uniq.begin(), uniq.end()), uniq.end());
+  for (auto& f : uniq) {
+    if (f.empty()) continue;
+    bool referenced = false;
     for (auto& it : items_)
-      if (it.blobFile == f || it.imgFile == f) n++;
-    return n;
-  };
-  if (countRefs(blobFile) == 0) DeleteFileQuiet((BlobDir() + L"\\" + Utf8ToUtf16(blobFile)));
-  if (countRefs(imgFile) == 0) DeleteFileQuiet((BlobDir() + L"\\" + Utf8ToUtf16(imgFile)));
+      if (it.blobFile == f || it.imgFile == f) { referenced = true; break; }
+    if (!referenced) DeleteFileQuiet(BlobDir() + L"\\" + Utf8ToUtf16(f));
+  }
 }
 
 void History::BuildView(const wstring& searchLower, int filter, std::vector<Item*>& out) {

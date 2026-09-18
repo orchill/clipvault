@@ -36,6 +36,8 @@ struct App {
   HICON hIconApp = nullptr;
 
   bool monitoring = true;  // false when paused
+  bool hotkeyOk = true;    // last RegisterHotKey result (surfaced to the user)
+  int persistRetries = 0;  // bounded retries after a failed items.json write
   bool selfWrite = false;  // guard: ignore clipboard updates we caused
   u64 lastSelfHash = 0;
   u64 lastSelfTs = 0;

@@ -197,11 +197,19 @@ bool DibToBgra(const std::vector<u8>& header, const std::vector<u8>& bits, bool 
   w = h = 0;
   if (header.size() < sizeof(BITMAPINFOHEADER)) return false;
   const BITMAPINFOHEADER* bi = (const BITMAPINFOHEADER*)header.data();
+  if (bi->biBitCount != 1 && bi->biBitCount != 4 && bi->biBitCount != 8 &&
+      bi->biBitCount != 16 && bi->biBitCount != 24 && bi->biBitCount != 32)
+    return false;  // impossible depth: reject before trusting it in arithmetic
   w = bi->biWidth;
   h = bi->biHeight < 0 ? -bi->biHeight : bi->biHeight;
   if (w <= 0 || h <= 0 || (long long)w * h > 64'000'000) return false;
 
+  // Bounds guarantee: prove the input buffer holds every pixel row before any
+  // copy below reads it. Truncated/malformed DIBs are rejected here instead of
+  // read past the end of the vector. (64-bit size_t: w<=64M, bpp<=32 -> no overflow)
   size_t stride = ((size_t)w * bi->biBitCount + 31) / 32 * 4;
+  unsigned long long need = (unsigned long long)stride * (unsigned long long)h;
+  if (bits.size() < need) return false;
 
   if (bi->biBitCount == 32) {
     bgra.resize((size_t)w * 4 * h);
@@ -232,8 +240,6 @@ bool DibToBgra(const std::vector<u8>& header, const std::vector<u8>& bits, bool 
   }
 
   // exotic depth (1/4/8/16 bpp): normalize through GDI
-  BITMAPINFOHEADER src = *bi;
-  src.biHeight = -h;  // force top-down target semantics below via BitBlt
   std::vector<u8> full = header;
   full.insert(full.end(), bits.begin(), bits.end());
   void* sectionBits = nullptr;

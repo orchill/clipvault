@@ -184,75 +184,108 @@ CaptureResult CaptureClipboard() {
   };
 
   // --- priority: image > rtf > html > text > files ---
+  // A malformed/unreadable higher-priority format falls through to the next
+  // one instead of discarding the whole capture; nothing malformed is accepted.
   UINT dibFmt = IsClipboardFormatAvailable(CF_DIBV5) ? CF_DIBV5
                 : IsClipboardFormatAvailable(CF_DIB) ? CF_DIB : 0;
-  if (dibFmt || IsClipboardFormatAvailable(pngFmt)) {
-    r.type = ItemType::Image;
-    if (IsClipboardFormatAvailable(pngFmt)) {
-      if (!CopyGlobal((HGLOBAL)GetClipboardData(pngFmt), r.pngBytes)) return bail();
-      ParsePngDims(r.pngBytes, r.imgW, r.imgH);
-      if (r.imgW <= 0 || r.imgH <= 0) return bail();  // malformed PNG payload
-      r.contentSize = r.pngBytes.size();
-      if (!r.contentSize) return bail();
-    } else {
-      HGLOBAL h = (HGLOBAL)GetClipboardData(dibFmt);
-      if (!h) return bail();
-      SIZE_T sz = GlobalSize(h);
-      const void* base = GlobalLock(h);
-      if (!base || !sz || sz > kMaxImageBytes) {
-        if (base) GlobalUnlock(h);
-        return bail();
+  bool hasPng = IsClipboardFormatAvailable(pngFmt);
+  if (dibFmt || hasPng) {
+    bool got = false;
+    if (hasPng) {
+      std::vector<u8> png;
+      if (CopyGlobal((HGLOBAL)GetClipboardData(pngFmt), png) && !png.empty()) {
+        int pw = 0, ph = 0;
+        ParsePngDims(png, pw, ph);
+        if (pw > 0 && ph > 0) {  // zero dims = malformed payload: try the DIB
+          r.pngBytes = std::move(png);
+          r.imgW = pw;
+          r.imgH = ph;
+          r.contentSize = r.pngBytes.size();
+          got = true;
+        }
       }
-      const BITMAPINFOHEADER* hdr = (const BITMAPINFOHEADER*)base;
-      if (hdr->biWidth <= 0 || hdr->biHeight == 0 || (long long)hdr->biWidth * hdr->biHeight > 64'000'000) {
-        GlobalUnlock(h);
-        return bail();  // degenerate / >64MP: refuse (memory safety)
-      }
-      size_t off = DibBitsOffset(hdr);
-      if (off >= sz) {
-        GlobalUnlock(h);
-        return bail();
-      }
-      r.dibHeader.assign((u8*)base, (u8*)base + off);
-      r.dibBits.assign((u8*)base + off, (u8*)base + sz);
-      r.imgW = hdr->biWidth;
-      r.imgH = hdr->biHeight < 0 ? -hdr->biHeight : hdr->biHeight;
-      if (hdr->biSize == sizeof(BITMAPV5HEADER)) {
-        const BITMAPV5HEADER* v5 = (const BITMAPV5HEADER*)hdr;
-        r.dibHasAlpha = v5->bV5AlphaMask != 0;
-      } else {
-        r.dibHasAlpha = hdr->biBitCount == 32;
-      }
-      GlobalUnlock(h);
-      r.contentSize = sz;
     }
-    r.ok = true;
-    CloseClipboard();
-    return r;
+    if (!got && dibFmt) {
+      HGLOBAL h = (HGLOBAL)GetClipboardData(dibFmt);
+      if (h) {
+        SIZE_T sz = GlobalSize(h);
+        const void* base = GlobalLock(h);
+        if (base && sz && sz <= kMaxImageBytes) {
+          const BITMAPINFOHEADER* hdr = (const BITMAPINFOHEADER*)base;
+          long long bw = hdr->biWidth;
+          long long bh = hdr->biHeight < 0 ? -(long long)hdr->biHeight : hdr->biHeight;
+          bool dimsOk = hdr->biSize >= sizeof(BITMAPINFOHEADER) && hdr->biSize <= sz &&
+                        bw > 0 && bh > 0 && bw * bh <= 64'000'000 &&  // >64MP: refuse
+                        hdr->biBitCount >= 1 && hdr->biBitCount <= 32 &&
+                        (hdr->biCompression == BI_RGB || hdr->biCompression == BI_BITFIELDS);
+          if (dimsOk) {
+            size_t off = DibBitsOffset(hdr);
+            // Bounds proof before storing: the buffer must actually contain
+            // stride * height pixel bytes (64-bit math: w<=64M, bpp<=32).
+            unsigned long long stride = (((unsigned long long)bw * hdr->biBitCount + 31) / 32) * 4;
+            unsigned long long need = stride * (unsigned long long)bh;
+            if (off < sz && need <= (unsigned long long)(sz - off)) {
+              r.dibHeader.assign((u8*)base, (u8*)base + off);
+              r.dibBits.assign((u8*)base + off, (u8*)base + sz);
+              r.imgW = (int)bw;
+              r.imgH = (int)bh;
+              if (hdr->biSize == sizeof(BITMAPV5HEADER)) {
+                const BITMAPV5HEADER* v5 = (const BITMAPV5HEADER*)hdr;
+                r.dibHasAlpha = v5->bV5AlphaMask != 0;
+              } else {
+                r.dibHasAlpha = hdr->biBitCount == 32;
+              }
+              r.contentSize = sz;
+              got = true;
+            }
+          }
+        }
+        if (base) GlobalUnlock(h);
+      }
+    }
+    if (got) {
+      r.type = ItemType::Image;
+      r.ok = true;
+      CloseClipboard();
+      return r;
+    }
+    // both image formats unusable -> fall through to rtf/html/text/files
   }
 
   if (IsClipboardFormatAvailable(rtfFmt)) {
-    if (!CopyGlobal((HGLOBAL)GetClipboardData(rtfFmt), r.rtfBytes)) return bail();
-    if (r.rtfBytes.size() > kMaxBlobBytes) { CloseClipboard(); return CaptureResult{}; }
-    r.type = ItemType::Rtf;
-    r.contentSize = r.rtfBytes.size();
-    if (r.text.empty()) r.text = RtfToText(r.rtfBytes);
-    if (r.text.empty()) { CloseClipboard(); return CaptureResult{}; }
-    r.ok = true;
-    CloseClipboard();
-    return r;
+    std::vector<u8> rtf;
+    if (CopyGlobal((HGLOBAL)GetClipboardData(rtfFmt), rtf) && !rtf.empty() &&
+        rtf.size() <= kMaxBlobBytes) {
+      wstring text = r.text.empty() ? RtfToText(rtf) : r.text;
+      if (!text.empty()) {
+        r.rtfBytes = std::move(rtf);
+        r.text = std::move(text);
+        r.type = ItemType::Rtf;
+        r.contentSize = r.rtfBytes.size();
+        r.ok = true;
+        CloseClipboard();
+        return r;
+      }
+    }
+    // unreadable/degenerate RTF -> fall back to HTML/text below
   }
 
   if (IsClipboardFormatAvailable(htmlFmt)) {
-    if (!CopyGlobal((HGLOBAL)GetClipboardData(htmlFmt), r.htmlBytes)) return bail();
-    if (r.htmlBytes.size() > kMaxBlobBytes) { CloseClipboard(); return CaptureResult{}; }
-    r.type = ItemType::Html;
-    r.contentSize = r.htmlBytes.size();
-    if (r.text.empty()) r.text = HtmlToText(r.htmlBytes);
-    if (r.text.empty()) { CloseClipboard(); return CaptureResult{}; }
-    r.ok = true;
-    CloseClipboard();
-    return r;
+    std::vector<u8> html;
+    if (CopyGlobal((HGLOBAL)GetClipboardData(htmlFmt), html) && !html.empty() &&
+        html.size() <= kMaxBlobBytes) {
+      wstring text = r.text.empty() ? HtmlToText(html) : r.text;
+      if (!text.empty()) {
+        r.htmlBytes = std::move(html);
+        r.text = std::move(text);
+        r.type = ItemType::Html;
+        r.contentSize = r.htmlBytes.size();
+        r.ok = true;
+        CloseClipboard();
+        return r;
+      }
+    }
+    // unreadable/degenerate HTML -> fall back to plain text below
   }
 
   if (!r.text.empty()) {

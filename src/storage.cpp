@@ -63,6 +63,12 @@ void Storage::Load(History& hist) {
     wstring dead = ItemsPath() + L".corrupt." + std::to_wstring(GetTickCount64());
     MoveFileExW(ItemsPath().c_str(), dead.c_str(), MOVEFILE_REPLACE_EXISTING);
     return;
+  if (root.get(L"version") && root.get(L"version")->asInt(0) != 1) {
+    // unknown schema: quarantine like corruption rather than mis-parsing
+    wstring deadv = ItemsPath() + L".unknown." + std::to_wstring(GetTickCount64());
+    MoveFileExW(ItemsPath().c_str(), deadv.c_str(), MOVEFILE_REPLACE_EXISTING);
+    return;
+  }
   }
 
   std::vector<Item> loaded;

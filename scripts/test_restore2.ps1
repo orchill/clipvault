@@ -1,4 +1,6 @@
 ﻿$ErrorActionPreference = "Stop"
+# deterministic config: defaults (persist on, autoPaste off, monitor on)
+Remove-Item (Join-Path $env:LOCALAPPDATA 'ClipVault\config.json') -Force -ErrorAction SilentlyContinue
 $data = Join-Path $env:LOCALAPPDATA "ClipVault"
 Add-Type @"
 using System; using System.Runtime.InteropServices; using System.Text;
@@ -29,14 +31,42 @@ Write-Host "== restore: image =="
 Stop-App
 $p = Launch
 & powershell -NoProfile -STA -ExecutionPolicy Bypass -File '$PSScriptRoot\sta_image.ps1'
-Start-Sleep -Milliseconds 2200   # capture + worker encode + thumbnail
+# wait until the worker has committed the image item (big encodes take seconds)
+$deadline = (Get-Date).AddSeconds(20)
+while ((Get-Date) -lt $deadline) {
+  $j = Get-Content (Join-Path $env:LOCALAPPDATA 'ClipVault\items.json') -Raw -Encoding UTF8 -ErrorAction SilentlyContinue
+  if ($j -and $j.Contains('"type":3')) { break }
+  Start-Sleep -Milliseconds 400
+}
+
 $hwnd = [R4]::Find()
 Show-Popup $hwnd
 [R4]::PostMessageW($hwnd, 0x8003, [IntPtr]4, [IntPtr]::Zero) | Out-Null   # Enter restores top item (the image)
 Start-Sleep -Milliseconds 1000
-$sta = Start-Process powershell -PassThru -WindowStyle Hidden -ArgumentList '-NoProfile','-STA','-ExecutionPolicy','Bypass','-Command', 'Add-Type -AssemblyName System.Windows.Forms; Add-Type -AssemblyName System.Drawing; if ([Windows.Forms.Clipboard]::ContainsImage()) { $img = [Windows.Forms.Clipboard]::GetImage(); $img.Save("$PSScriptRoot\..\build\restored_image.png"); Write-Host ("restored image: " + $img.Width + "x" + $img.Height); exit 0 } else { Write-Host "NO IMAGE ON CLIPBOARD"; exit 1 }'
-$sta.WaitForExit()
-if ($sta.ExitCode -ne 0) { throw "image restore failed" }
+# raw clipboard check (CF_DIBV5 or CF_DIB must be present with real bytes)
+Add-Type @"
+using System; using System.Runtime.InteropServices;
+public class RDIB {
+  [DllImport("user32.dll")] public static extern bool OpenClipboard(IntPtr h);
+  [DllImport("user32.dll")] public static extern bool CloseClipboard();
+  [DllImport("user32.dll")] public static extern IntPtr GetClipboardData(uint f);
+  [DllImport("user32.dll")] public static extern uint EnumClipboardFormats(uint f);
+  [DllImport("kernel32.dll")] public static extern UIntPtr GlobalSize(IntPtr h);
+}
+"@
+if (-not [RDIB]::OpenClipboard([IntPtr]::Zero)) { throw "could not open clipboard for check" }
+$szV5 = [RDIB]::GlobalSize([RDIB]::GetClipboardData(17)).ToUInt64()   # CF_DIBV5
+$szDib = [RDIB]::GlobalSize([RDIB]::GetClipboardData(8)).ToUInt64()   # CF_DIB
+[RDIB]::CloseClipboard() | Out-Null
+Write-Host ("  CF_DIBV5 bytes: " + $szV5 + " | CF_DIB bytes: " + $szDib)
+$fmts = @()
+if ([RDIB]::OpenClipboard([IntPtr]::Zero)) {
+  $f = 0
+  while (($f = [RDIB]::EnumClipboardFormats($f)) -ne 0) { $fmts += $f }
+  [RDIB]::CloseClipboard() | Out-Null
+}
+Write-Host ("  formats after restore: " + ($fmts -join ","))
+if ([Math]::Max($szV5, $szDib) -lt 1000) { throw "image restore failed (no DIB data)" }
 Write-Host "PASS: image restored to clipboard"
 Stop-App
 

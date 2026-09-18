@@ -45,6 +45,8 @@ enum { A_LEFT = 0, A_RIGHT = 1, A_STRETCH = 2, A_BOTTOM_L = 3, A_BOTTOM_R = 4 };
 struct SettingsUi {
   HWND hwnd = nullptr;
   HWND hotkeyBtn = nullptr;
+  HWND statusLabel = nullptr;
+  bool hotkeyConflict = false;
   bool capturing = false;
   HFONT font = nullptr, fontBold = nullptr;
   HBRUSH bgBrush = nullptr, surfaceBrush = nullptr;
@@ -104,6 +106,7 @@ void Reposition() {
 }
 
 // ---------------- control helpers ----------------
+void UpdateHotkeyStatus();
 
 void SetCtrlTheme(HWND h, const wchar_t* theme = L"DarkMode_Explorer") {
   SetWindowTheme(h, theme, nullptr);
@@ -228,6 +231,24 @@ void PaintButton(HWND hwnd, DRAWITEMSTRUCT* dis) {
 
 // ---------------- values ----------------
 
+// Reflect whether the shown shortcut can actually be registered. An unchanged
+// combo keeps the app's real registration state; a new combo is probed against
+// the system (it cannot collide with our own id-1 registration unless identical).
+void UpdateHotkeyStatus() {
+  if (!g_ui.statusLabel) return;
+  Settings& st = Settings::I();
+  UINT mods = g_pending.hotkeyChanged ? g_pending.mods : st.hotkeyMods;
+  UINT vk = g_pending.hotkeyChanged ? g_pending.vk : st.hotkeyVk;
+  bool unchanged = !g_pending.hotkeyChanged || (mods == st.hotkeyMods && vk == st.hotkeyVk);
+  bool ok = unchanged ? A().hotkeyOk
+                      : RegisterHotKey(g_ui.hwnd, 0x7FFF, mods | MOD_NOREPEAT, vk) != 0;
+  if (!unchanged && ok) UnregisterHotKey(g_ui.hwnd, 0x7FFF);
+  g_ui.hotkeyConflict = !ok;
+  SetWindowTextW(g_ui.statusLabel,
+                 ok ? L"" : L"This shortcut is already in use by another program.");
+  InvalidateRect(g_ui.statusLabel, nullptr, TRUE);
+}
+
 void LoadValues() {
   Settings& s = Settings::I();
   auto chk = [&](int id, bool v) {
@@ -259,6 +280,7 @@ void LoadValues() {
 
   SetWindowTextW(g_ui.hotkeyBtn, HotkeyToString(s.hotkeyMods, s.hotkeyVk).c_str());
   InvalidateRect(g_ui.hotkeyBtn, nullptr, TRUE);
+  UpdateHotkeyStatus();
 
   wstring excl;
   for (auto& e : s.excludedApps) {
@@ -347,6 +369,7 @@ LRESULT CALLBACK HotkeyBtnProc(HWND h, UINT m, WPARAM w, LPARAM l, UINT_PTR, DWO
       g_ui.capturing = false;
       SetWindowTextW(h, HotkeyToString(mods, vk).c_str());
       InvalidateRect(h, nullptr, TRUE);
+      UpdateHotkeyStatus();
       return 0;
     }
     case WM_SETFOCUS: {
@@ -410,6 +433,8 @@ LRESULT CALLBACK SettingsProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
       AddLabel(hwnd, L"Global shortcut:", kMargin + 16, y + 5, 120, 20, false);
       g_ui.hotkeyBtn = AddButton(hwnd, ID_HOTKEY, L"", kMargin + 150, y, 150, 30, A_LEFT);
       SetWindowSubclass(g_ui.hotkeyBtn, HotkeyBtnProc, 1, 0);
+      g_ui.statusLabel = AddLabel(hwnd, L"", kMargin + 16, y + 31, kW - 64, 18, false);
+      g_ui.statusLabel = AddLabel(hwnd, L"", kMargin + 16, y + 31, kW - 64, 18, false);
       AddCheck(hwnd, ID_AUTOPASTE, L"Paste immediately on selection (Ctrl+V)", kMargin + 16,
                y + 36, kW - 64);
       y += 64;

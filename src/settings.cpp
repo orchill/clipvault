@@ -6,8 +6,15 @@ namespace cv {
 static wstring ConfigPath() { return DataDir() + L"\\config.json"; }
 
 bool Settings::IsExcluded(const wstring& exeNameLower) const {
-  for (auto& e : excludedApps)
-    if (!e.empty() && exeNameLower.find(e) != wstring::npos) return true;
+  // exact file-name identity, not substring: an entry "code.exe" must not
+  // silently match "vscode.exe". A trailing ".*" entry keeps prefix matching
+  // for users who explicitly want it.
+  for (auto& e : excludedApps) {
+    if (e.empty()) continue;
+    if (exeNameLower == e) return true;
+    size_t star = e.find(L'*');
+    if (star != wstring::npos && exeNameLower.find(e.substr(0, star)) == 0) return true;
+  }
   return false;
 }
 

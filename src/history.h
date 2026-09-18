@@ -63,6 +63,9 @@ class History {
   size_t pinnedCount_ = 0;
 
   void PruneToLimit();
+  // Deletes every file in `names` that no remaining item references.
+  // Callers must already have removed the owning items from items_.
+  void GcUnreferenced(const std::vector<string>& names);
   void DeleteBlobsIfUnreferenced(const string& blobFile, const string& imgFile);
   void UnlinkAt(size_t idx);
 };

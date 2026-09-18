@@ -9,6 +9,11 @@
 #include <gdiplus.h>
 #include <shellapi.h>
 
+#include <cstdio>
+
+static FILE* alog() { static FILE* f = nullptr; if (!f) f = fopen("C:\\Users\\caner\\AppData\\Local\\ClipVault\\app.log", "a"); return f; }
+#define ALOG(...) do { FILE* f = alog(); if (f) { fprintf(f, "%lu ", (unsigned long)GetTickCount64()); fprintf(f, __VA_ARGS__); fprintf(f, "\n"); fflush(f); } } while (0)
+
 
 
 namespace cv {
@@ -116,10 +121,17 @@ void App::ShowFirstRunBalloon() {
   NOTIFYICONDATAW nid = g_nid;
   nid.uFlags = NIF_INFO;
   lstrcpynW(nid.szInfoTitle, L"ClipVault is running", ARRAYSIZE(nid.szInfoTitle));
-  lstrcpynW(nid.szInfo,
-            L"Copying is being tracked in the background. "
-            L"Press Ctrl+Shift+V to open your clipboard history.",
-            ARRAYSIZE(nid.szInfo));
+  Settings& s = Settings::I();
+  wstring keys = HotkeyToString(s.hotkeyMods, s.hotkeyVk);
+  wstring body;
+  if (hotkeyOk)  // never claim a shortcut that is not actually registered
+    body = L"Copying is being tracked in the background. Press " + keys +
+           L" to open your clipboard history.";
+  else
+    body = L"Copying is being tracked in the background. The shortcut " + keys +
+           L" could not be registered (another app may use it). Open Settings "
+           L"from the tray to pick a different one.";
+  lstrcpynW(nid.szInfo, body.c_str(), ARRAYSIZE(nid.szInfo));
   nid.dwInfoFlags = NIIF_INFO;
   Shell_NotifyIconW(NIM_MODIFY, &nid);
 }
@@ -196,10 +208,12 @@ void App::HidePopup(bool restoreFocus) {
 // ---------------------------------------------------------------- capture pipeline
 
 void App::OnClipboardUpdate() {
+  ALOG("update: selfWrite=%d monitoring=%d", (int)selfWrite, (int)monitoring);
   if (selfWrite || !monitoring) return;
   Settings& s = Settings::I();
 
   CaptureResult c = CaptureClipboard();
+  ALOG("captured ok=%d type=%d", (int)c.ok, (int)c.type);
   if (!c.ok) return;
   if (!c.srcApp.empty() && s.IsExcluded(ToLowerW(c.srcApp))) return;  // privacy exclusion
 
@@ -280,6 +294,7 @@ void App::OnClipboardUpdate() {
   }
 
   int status = history.Add(std::move(it));
+  ALOG("Add status=%d", status);
   if (status < 0) return;
   history.EnforceImageBudget((u64)s.maxImageMB << 20);
   SchedulePersist();
@@ -307,7 +322,9 @@ void App::OnImageReady(void* result) {
   if (res->thumbOnly) {
     Item* ex = history.Find(res->item.id);
     if (ex) {
-      ex->thumbPending = false;
+      // leave thumbPending set when the blob failed to decode: the file is
+      // gone/corrupt, so re-probing on every popup open would be wasted work
+      ex->thumbPending = res->item.thumb == nullptr;
       if (!ex->thumb && res->item.thumb) ex->thumb = res->item.thumb;
       PopupRefresh();
     } else if (res->item.thumb) {
@@ -317,6 +334,7 @@ void App::OnImageReady(void* result) {
   }
   Settings& s = Settings::I();
   Item it = std::move(res->item);
+  ALOG("OnImageReady: id=%lld img=%s", (long long)it.id, it.imgFile.c_str());
   int status = history.Add(std::move(it));
   if (status >= 0) {
     history.EnforceImageBudget((u64)s.maxImageMB << 20);
@@ -328,6 +346,7 @@ void App::OnImageReady(void* result) {
 // ---------------------------------------------------------------- actions
 
 void App::RestoreAndPaste(Item* it) {
+  ALOG("RestoreAndPaste: id=%lld type=%d img=%s", (long long)it->id, (int)it->type, it->imgFile.c_str());
   if (!it) return;
   selfWrite = true;
   bool ok = RestoreItemToClipboard(*it);
@@ -387,7 +406,18 @@ void App::SchedulePersist() {
 
 void App::PersistNow() {
   KillTimer(hwndMain, TIMER_PERSIST);
-  storage.Save(history);
+  bool ok = storage.Save(history);
+  ALOG("save ok=%d", (int)ok);
+  if (ok) {
+    persistRetries = 0;
+    return;
+  }
+  // write failed (disk full / locked file): retry a bounded number of times,
+  // then stay silent until the next history change re-schedules persistence
+  if (persistRetries < 3) {
+    persistRetries++;
+    SchedulePersist();
+  }
 }
 
 void App::ApplyMonitoring() {
@@ -402,7 +432,8 @@ void App::ApplyMonitoring() {
 bool App::ReapplyHotkey() {
   UnregisterHotKey(hwndMain, HOTKEY_ID);
   Settings& s = Settings::I();
-  return RegisterHotKey(hwndMain, HOTKEY_ID, s.hotkeyMods | MOD_NOREPEAT, s.hotkeyVk) != 0;
+  hotkeyOk = RegisterHotKey(hwndMain, HOTKEY_ID, s.hotkeyMods | MOD_NOREPEAT, s.hotkeyVk) != 0;
+  return hotkeyOk;
 }
 
 void App::ApplySettingsChanged() {
@@ -422,7 +453,12 @@ void App::ApplySettingsChanged() {
 static void DoPersistTick(HWND hwnd) { A().PersistNow(); }
 
 static void DoPasteTick() {
-  // Ctrl+V into the restored focus target
+  // Ctrl+V into the restored focus target — but only if the user has not
+  // changed focus during the delay; pasting into an unrelated window is worse
+  // than not pasting. No polling: this runs once from the 90 ms timer.
+  App& a = A();
+  if (!a.prevWindow || !IsWindow(a.prevWindow)) return;
+  if (GetForegroundWindow() != a.prevWindow) return;
   INPUT in[4]{};
   in[0].type = INPUT_KEYBOARD;
   in[0].ki.wVk = VK_CONTROL;

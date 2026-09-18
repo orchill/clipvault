@@ -112,9 +112,13 @@ bool RestoreImage(const Item& it, ClipboardWriter& w) {
     AppendDibFromBitmap(&bmp, true, dibV5);
     AppendDibFromBitmap(&bmp, false, dib);
   }
-  if (!dibV5.empty()) w.Set(CF_DIBV5, dibV5.data(), dibV5.size());
-  if (!dib.empty()) w.Set(CF_DIB, dib.data(), dib.size());
-  return !dibV5.empty() || !dib.empty();
+  // success = a required format actually landed on the clipboard; generated
+  // buffers alone (or a failed SetClipboardData) must not report success,
+  // or the caller would fire an auto-paste of stale clipboard content
+  bool wrote = false;
+  if (!dibV5.empty()) wrote = w.Set(CF_DIBV5, dibV5.data(), dibV5.size());
+  if (!dib.empty()) wrote = w.Set(CF_DIB, dib.data(), dib.size()) || wrote;
+  return wrote;
 }
 
 bool RestoreFiles(const Item& it, ClipboardWriter& w) {

@@ -336,7 +336,6 @@ void Paint(HWND hwnd) {
   }
 
   // rows
-  int listW = s.rcList.right - s.rcList.left;
   if (s.view.empty()) {
     // empty state
     const wchar_t* title;
@@ -712,7 +711,12 @@ static LRESULT CALLBACK PopupWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM 
       SetBkColor(dc, a.ui.th.surface);
       SetTextColor(dc, a.ui.th.text);
       static HBRUSH br = nullptr;
-      if (!br) br = CreateSolidBrush(a.ui.th.surface);
+      static COLORREF madeFrom = 0xFFFFFFFF;
+      if (!br || madeFrom != a.ui.th.surface) {  // theme switch: rebuild, don't reuse
+        if (br) DeleteObject(br);
+        br = CreateSolidBrush(a.ui.th.surface);
+        madeFrom = a.ui.th.surface;
+      }
       return (LRESULT)br;
     }
 
@@ -895,10 +899,13 @@ static LRESULT CALLBACK PopupWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM 
       AppendMenuW(m, MF_STRING | (s.view[row]->pinned ? MF_CHECKED : 0), CM_PIN,
                   s.view[row]->pinned ? L"Unpin" : L"Pin");
       AppendMenuW(m, MF_STRING, CM_DELETE, L"Delete");
+      // stable id captured before the modal menu loop: a clipboard update can
+      // mutate/reallocate history while the menu is open, invalidating pointers
+      i64 menuItemId = s.view[row]->id;
       int cmd = TrackPopupMenu(m, TPM_RETURNCMD | TPM_NONOTIFY | TPM_RIGHTBUTTON, pt.x, pt.y, 0,
                                hwnd, nullptr);
       DestroyMenu(m);
-      Item* it = row < (int)s.view.size() ? s.view[row] : nullptr;
+      Item* it = a.history.Find(menuItemId);  // re-resolve; nullptr if deleted meanwhile
       switch (cmd) {
         case CM_ACTIVATE:
           if (it) a.RestoreAndPaste(it);

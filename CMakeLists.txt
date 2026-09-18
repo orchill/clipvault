@@ -65,3 +65,22 @@ else()
 endif()
 
 set_target_properties(ClipVault PROPERTIES OUTPUT_NAME "ClipVault")
+
+# deterministic core regression tests (blob GC, DIB bounds, history edges)
+add_executable(test_core EXCLUDE_FROM_ALL
+  tests/test_core.cpp
+  src/history.cpp
+  src/settings.cpp
+  src/storage.cpp
+  src/theme.cpp
+  src/util.cpp
+  src/imaging.cpp
+)
+target_compile_definitions(test_core PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX _CRT_SECURE_NO_WARNINGS)
+target_link_libraries(test_core PRIVATE gdiplus gdi32 user32 shell32 advapi32 ole32 uuid)
+if (MSVC)
+  target_compile_options(test_core PRIVATE /EHsc)
+else()
+  target_compile_options(test_core PRIVATE -O1 -static -static-libgcc -static-libstdc++)
+  target_link_options(test_core PRIVATE -static -static-libgcc -static-libstdc++)
+endif()

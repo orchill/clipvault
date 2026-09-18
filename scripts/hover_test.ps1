@@ -1,4 +1,6 @@
 ﻿$ErrorActionPreference = "Stop"
+# deterministic config: defaults (persist on, autoPaste off, monitor on)
+Remove-Item (Join-Path $env:LOCALAPPDATA 'ClipVault\config.json') -Force -ErrorAction SilentlyContinue
 Add-Type @"
 using System; using System.Runtime.InteropServices; using System.Text;
 public class HV {
